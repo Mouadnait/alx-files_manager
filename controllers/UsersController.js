@@ -1,32 +1,22 @@
-import Queue from 'bull';
-import UsersCollection from '../utils/users';
+const dbClient = require("../utils/db");
+const redisClient = require("../utils/redis");
 
-// User welcome email queue
-const userQueue = Queue('send welcome email');
+class UserController {
+  static async getMe(req, res) {
+    const token = req.headers["x-token"];
+    const userId = await redisClient.get(`auth_${token}`);
 
-class UsersController {
-    /**
-     * Controller for endpoint POST /users for creating new users
-     * @typedef {import("express").Request} Request
-     * @typedef {import("express").Response} Response
-     * @param {Request} req - request object
-     * @param {Response} res - response object
-     */
-    static async postNew(req, res) {
-        const { email, password } = req.body;
-        if (email === undefined) {
-        res.status(400).json({ error: 'Missing email' });
-        } else if (password === undefined) {
-        res.status(400).json({ error: 'Missing password' });
-        } else if (await UsersCollection.getUser({ email })) {
-        res.status(400).json({ error: 'Already exist' });
-        } else {
-        // Create new user
-        const userId = await UsersCollection.createUser(email, password);
-        userQueue.add({ userId });
-        res.status(201).json({ id: userId, email });
-        }
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
     }
+
+    const user = await dbClient.findUserById(userId);
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    return res.status(200).json({ id: user._id, email: user.email });
+  }
 }
 
-export default UsersController;
+module.exports = UserController;
