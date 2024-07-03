@@ -1,36 +1,48 @@
-const Queue = require("bull");
-const imageThumbnail = require("image-thumbnail");
-const dbClient = require("./utils/db");
-const fs = require("fs");
-const path = require("path");
+import Queue from 'bull';
+import { ObjectId } from 'mongodb';
+import { generate } from 'image-thumbnail';
+import fs from 'fs';
+import dbClient from './utils/db';
 
-const fileQueue = new Queue("fileQueue");
+const fileQueue = new Queue('fileQueue');
+const userQueue = new Queue('userQueue');
+
+async function generateThumbnail(inputPath, width) {
+  try {
+    const thumbnail = await generate(inputPath, { width });
+    const path = `${inputPath}_${width}`;
+    fs.writeFileSync(path, thumbnail);
+  } catch (error) {
+    throw new Error('Trouble saving the thumbnail');
+  }
+}
 
 fileQueue.process(async (job) => {
-  if (!job.data.fileId || !job.data.userId) {
-    throw new Error("Missing fileId or userId");
-  }
+  try {
+    const { fileId, userId } = job.data;
+    if (!fileId) throw new Error('Missing fileId');
+    if (!userId) throw new Error('Missing userId');
 
-  const file = await dbClient.getFileByIdAndUserId(
-    job.data.fileId,
-    job.data.userId
-  );
-  if (!file) {
-    throw new Error("File not found");
-  }
+    const file = await dbClient.db
+      .collection('files')
+      .findOne({ _id: ObjectId(fileId), userId: ObjectId(userId) });
+    if (!file) throw new Error('File not found');
 
-  const sizes = [500, 250, 100];
-  sizes.forEach(async (size) => {
-    const thumbnail = await imageThumbnail(
-      { uri: file.localPath },
-      { width: size }
-    );
-    const thumbnailPath = `${file.localPath}_${size}`;
-    fs.writeFileSync(thumbnailPath, thumbnail);
-  });
+    const inputPath = file.path;
+
+    await generateThumbnail(inputPath, 500);
+    await generateThumbnail(inputPath, 250);
+    await generateThumbnail(inputPath, 100);
+  } catch (error) {
+    throw new Error(`Error processing job: ${error.message}`);
+  }
 });
 
-// Start the worker
-fileQueue.on("completed", (job, result) => {
-  console.log(`Job completed with result ${result}`);
+userQueue.process(async (job) => {
+  const { userId } = job.data;
+  if (!userId) throw new Error('Missing userId');
+
+  const user = await dbClient.db.collection('users').findOne({ _id: ObjectId(userId) });
+  if (!user) throw new Error('User not found');
+  console.log(`Welcome ${user.email}!`);
 });
